@@ -48,7 +48,10 @@ def _white_mask(img):
 def _card_boxes(img):
     """Ищет белые прямоугольники размером с карту (включая слипшиеся ряды)."""
     H = img.shape[0]
-    cnts, _ = cv2.findContours(_white_mask(img), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    m = _white_mask(img)
+    k = max(5, int(H * 0.0055)) | 1  # стираем тонкие белые линии на сукне, которые "приклеиваются" к картам
+    m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
+    cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     out = []
     for c in cnts:
         x, y, w, h = cv2.boundingRect(c)
@@ -227,7 +230,7 @@ def run_live(monitor, fps):
     tr = Tracker(w)
     print("Трекер запущен. Играйте как обычно, окно можно свернуть.")
     print("Раздачи пишутся в hands.csv. Остановить: Ctrl+C, потом run_report.bat\n")
-    with mss.mss() as sct:
+    with (mss.MSS() if hasattr(mss, 'MSS') else mss.mss()) as sct:
         try:
             while True:
                 t0 = time.time()
@@ -240,7 +243,7 @@ def run_live(monitor, fps):
 
 def run_check(monitor):
     import mss
-    with mss.mss() as sct:
+    with (mss.MSS() if hasattr(mss, 'MSS') else mss.mss()) as sct:
         img = grab_screen(sct, monitor)
     annotate(img, os.path.join(HERE, "check.png"))
 

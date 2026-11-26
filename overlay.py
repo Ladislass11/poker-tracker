@@ -116,7 +116,7 @@ def run(monitor, fps, record=True):
     writer = pt.CsvWriter(pt.CSV_PATH) if record else None
     tracker = pt.Tracker(writer) if record else None
     engine = HintEngine()
-    sct = mss.mss()
+    sct = mss.MSS() if hasattr(mss, 'MSS') else mss.mss()
 
     def grab():
         return pt.grab_screen(sct, monitor)
