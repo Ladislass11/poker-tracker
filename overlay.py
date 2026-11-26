@@ -34,27 +34,31 @@ class HintEngine:
         board, other = pt.read_screen(img)
         seats = players.read_seats(img)
         me = next((s for s in seats if s["me"]), None)
-        # ваши карты = открытая пара ближе всего к вашей панели
+        # ваши карты лежат прямо над вашей панелью (у соперников на вскрытии - над их панелями)
+        mine = []
         if me:
-            mx, my = self._seat_xy(me["seat"], W, H)
-            other = sorted(other, key=lambda o: (o[1] - mx) ** 2 + (o[2] - my) ** 2)
-        hole = tuple(sorted(o[0] for o in other[:2])) if len(other) >= 2 else None
+            sx, sy = players.SLOTS[me["seat"]]
+            mx, my = (sx + 167) / 2559, (sy - 93) / 1439
+            mine = [o for o in other if abs(o[1] - mx) < 0.06 and abs(o[2] - my) < 0.07]
+        hole = tuple(sorted(o[0] for o in mine)) if len(mine) == 2 else None
+        others = [o for o in other if o not in mine]
         if hole and hole != self.cur_hole and not board:
             self.cur_hole = hole
             self.prof.new_hand()
         self.prof.update(seats, len(board))
         # вскрытие: карты соперников запоминаем в их профиль
-        if len(board) == 5 and len(other) >= 4:
+        if len(board) == 5 and len(others) >= 2:
             for s in seats:
                 if s["me"]:
                     continue
-                sx, sy = self._seat_xy(s["seat"], W, H)
-                near = [o for o in other[2:] if (o[1] - sx) ** 2 + (o[2] - sy) ** 2 < 0.02]
+                px, py = players.SLOTS[s["seat"]]
+                cx, cy = (px + 167) / 2559, (py - 93) / 1439
+                near = [o for o in others if abs(o[1] - cx) < 0.06 and abs(o[2] - cy) < 0.07]
                 if len(near) == 2:
                     self.prof.add_show(s["seat"], [o[0] for o in near], board)
         my_turn, to_call = hints.read_buttons(img)
-        if not hole:
-            return None  # вы не в раздаче
+        if not hole or to_call == "none":
+            return None  # вы не в раздаче или идёт вскрытие
         unread = to_call is None
         if unread:
             to_call = self.last["to_call"] if self.last and self.last.get("hole") == hole else 0

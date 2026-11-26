@@ -45,7 +45,7 @@ def read_buttons(img):
         if 0.10 * W < w < 0.16 * W and 0.04 * H < h < 0.07 * H:
             bs.append((x + x0, y + y0, w, h))
     if len(bs) < 3:
-        return False, None
+        return False, "none"  # кнопок нет: вы не в раздаче или идёт вскрытие
     x, y, w, h = sorted(bs, key=lambda r: (r[1] // 20, r[0]))[0]
     icon = cv2.cvtColor(img[y + int(h * .3):y + int(h * .7), x + int(w * .03):x + int(w * .11)], cv2.COLOR_BGR2HSV)
     my_turn = (((icon[..., 0] < 10) | (icon[..., 0] > 165)) & (icon[..., 1] > 120)).mean() > 0.05
