@@ -294,7 +294,9 @@ def my_position(seats, dealer):
     me = next((s["seat"] for s in seats if s["me"]), None)
     if me is None or dealer is None:
         return None
-    occupied = [i for i in ORDER if any(s["seat"] == i for s in seats)]
+    # пропускаем пустые места и тех, у кого 0 фишек и нет карт (выбыл / сидит без игры)
+    active = {s["seat"] for s in seats if s["me"] or s["in_hand"] or (s["stack"] or 0) > 0 or s["seat"] == dealer}
+    occupied = [i for i in ORDER if i in active]
     if dealer not in occupied or me not in occupied:
         return None
     k = occupied.index(dealer)

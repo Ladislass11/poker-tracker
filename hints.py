@@ -44,7 +44,7 @@ def read_buttons(img):
         x, y, w, h = cv2.boundingRect(c)
         if 0.10 * W < w < 0.16 * W and 0.04 * H < h < 0.07 * H:
             bs.append((x + x0, y + y0, w, h))
-    if len(bs) < 3:
+    if len(bs) < 2:
         return False, "none"  # кнопок нет: вы не в раздаче или идёт вскрытие
     x, y, w, h = sorted(bs, key=lambda r: (r[1] // 20, r[0]))[0]
     icon = cv2.cvtColor(img[y + int(h * .3):y + int(h * .7), x + int(w * .03):x + int(w * .11)], cv2.COLOR_BGR2HSV)
@@ -56,7 +56,11 @@ def read_buttons(img):
     # CHECK = 5 букв без числа; CALL = 4 буквы + цифры суммы (пробел бывает узким, на него не опираемся)
     if len(comps) < 6:
         return my_turn, 0
-    return my_turn, _digits(ink, comps[4:], B_T)  # None = сумму не удалось прочитать
+    # "CALL 3 000": 4 буквы, "ALL IN 8 500": 5 букв
+    v = _digits(ink, comps[4:], B_T)
+    if v is None:
+        v = _digits(ink, comps[5:], B_T)
+    return my_turn, v  # None = сумму не удалось прочитать
 
 
 def read_pot(img):
