@@ -121,7 +121,7 @@ class Profiles:
         except Exception:
             self.p = {}
         self.seat_id = {}        # место -> ID (держится, пока не появится другой)
-        self.id_votes = {}       # место -> Counter прочтений
+        self.id_votes = {}       # место -> последние прочтения номера
         self.last_status = {}
         self.street = None
         self.street_bet = False
@@ -160,12 +160,14 @@ class Profiles:
                 self.seat_id[i] = "me"
                 continue
             if s["id"]:
-                v = self.id_votes.setdefault(i, Counter())
-                v[s["id"]] += 1
-                best, n = v.most_common(1)[0]
+                # голосуем только по последним 5 прочтениям: если на место сел другой игрок,
+                # его номер быстро вытеснит прежний
+                v = self.id_votes.setdefault(i, [])
+                v.append(s["id"])
+                del v[:-5]
+                best, n = Counter(v).most_common(1)[0]
                 if n >= 3 and self.seat_id.get(i) != best:
                     self.seat_id[i] = best
-                    self.id_votes[i] = Counter({best: n})
             pid = self.seat_id.get(i)
             if not pid or pid == "me":
                 continue
