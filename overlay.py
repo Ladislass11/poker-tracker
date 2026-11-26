@@ -53,8 +53,11 @@ class HintEngine:
                 if len(near) == 2:
                     self.prof.add_show(s["seat"], [o[0] for o in near], board)
         my_turn, to_call = hints.read_buttons(img)
-        if (to_call is None and not my_turn) or not hole:
+        if not hole:
             return None  # вы не в раздаче
+        unread = to_call is None
+        if unread:
+            to_call = self.last["to_call"] if self.last and self.last.get("hole") == hole else 0
         if not board and to_call:
             self.bb_seen[to_call] += 1
         pot = hints.read_pot(img) if board else None
@@ -96,6 +99,7 @@ class HintEngine:
                              my_stack=my_stack, bb=bb, pos=pos)
             self.last_key = key
         self.last["my_turn"] = my_turn
+        self.last["unread"] = unread
         return self.last
 
 
@@ -179,6 +183,8 @@ def run(monitor, fps, record=True):
             else:
                 col = COLORS.get(h["act"].split()[0], "#fff")
                 wait = "" if h["my_turn"] else "   (пока не ваш ход)"
+                if h.get("unread"):
+                    wait += "   (?) сумму на кнопке не прочитал"
                 big.config(text=f"{h['act']}{wait}", fg=col)
                 cards = " ".join(pt.card_str(c) for c in h["hole"])
                 board = " ".join(pt.card_str(c) for c in h["board"]) or "до флопа"

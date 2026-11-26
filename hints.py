@@ -53,20 +53,10 @@ def read_buttons(img):
     bh = cv2.cvtColor(b, cv2.COLOR_BGR2HSV)
     ink = ((bh[..., 2] < 120) | ((bh[..., 1] > 120) & (bh[..., 2] > 80))).astype(np.uint8)
     comps = [c for c in _components(ink, int(h * .17)) if c[0] > b.shape[1] * 0.04]
-    # первое слово (CHECK / CALL) отделено пробелом от числа
-    words, cur = [], []
-    gap = h * 0.12
-    for c in comps:
-        if cur and c[0] - (cur[-1][0] + cur[-1][2]) > gap:
-            words.append(cur)
-            cur = []
-        cur.append(c)
-    if cur:
-        words.append(cur)
-    if len(words) < 2:
+    # CHECK = 5 букв без числа; CALL = 4 буквы + цифры суммы (пробел бывает узким, на него не опираемся)
+    if len(comps) < 6:
         return my_turn, 0
-    digits = [c for wd in words[1:] for c in wd]
-    return my_turn, _digits(ink, digits, B_T)
+    return my_turn, _digits(ink, comps[4:], B_T)  # None = сумму не удалось прочитать
 
 
 def read_pot(img):
