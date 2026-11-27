@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 """Окно-подсказка поверх игры + запись раздач."""
-VERSION = "версия 15 (27.11)"
+VERSION = "версия 16 (27.11)"
 import time
 from collections import Counter
 
 import poker_tracker as pt
 import hints
 import players
-
-COLORS = {"ФОЛД": "#ff6b6b", "ЧЕК": "#cfd8dc", "КОЛЛ": "#ffd166", "СТАВКА": "#06d6a0",
-          "МАЛЕНЬКАЯ": "#06d6a0", "РЕЙЗ": "#06d6a0", "ОЛ-ИН": "#06d6a0", "СТАВКА-БЛЕФ": "#c792ea"}
+import hud
 
 
 class HintEngine:
@@ -146,14 +144,10 @@ class HintEngine:
                 why += " · ставит агрессивный игрок, часто блефует"
             elif style == "passive" and to_call:
                 why += " · ставит пассивный игрок - обычно сильная рука"
-            risk = ""
-            if my_stack and to_call:
-                part = min(1.0, to_call / my_stack)
-                risk = f"колл = {part:.0%} вашего стека"
             opps = [self.prof.summary(self.prof.seat_id[s["seat"]]) for s in in_hand
                     if self.prof.seat_id.get(s["seat"]) not in (None, "me")][:3]
             self.last = dict(hole=hole, board=board, eq=eq, act=act, why=why, n_opp=n_opp, to_call=to_call,
-                             pot=pot, desc=hints.describe(list(hole), list(board)), risk=risk, opps=opps,
+                             pot=pot, desc=hints.describe(list(hole), list(board)), opps=opps,
                              my_stack=my_stack, bb=bb, pos=pos)
             self.last_key = key
         self.last["my_turn"] = my_turn
@@ -200,18 +194,12 @@ def run(monitor, fps, record=True, bb=None):
     root.overrideredirect(True)
     root.attributes("-topmost", True)
     try:
-        root.attributes("-alpha", 0.88)
+        root.attributes("-alpha", 0.93)
     except Exception:
         pass
-    root.configure(bg="#111")
+    root.configure(bg=hud.PALETTE["back"])
     root.geometry("+20+20")
-    big = tk.Label(root, text="Жду раздачу...", font=("Segoe UI", 20, "bold"), fg="#fff", bg="#111", anchor="w")
-    big.pack(fill="x", padx=12, pady=(8, 0))
-    mid = tk.Label(root, text="", font=("Segoe UI", 12), fg="#ddd", bg="#111", anchor="w", justify="left")
-    mid.pack(fill="x", padx=12)
-    small = tk.Label(root, text=f"{VERSION} · перетащите мышью · правый клик - закрыть", font=("Segoe UI", 9),
-                     fg="#777", bg="#111", anchor="w")
-    small.pack(fill="x", padx=12, pady=(0, 8))
+    view = hud.Hud(root, VERSION)
 
     drag = {}
 
@@ -226,10 +214,10 @@ def run(monitor, fps, record=True, bb=None):
             tracker.finish()
         root.destroy()
 
-    for w in (root, big, mid, small):
-        w.bind("<Button-1>", start)
-        w.bind("<B1-Motion>", move)
-        w.bind("<Button-3>", close)
+    # привязка к окну срабатывает и для холста внутри него (один раз на клик)
+    root.bind("<Button-1>", start)
+    root.bind("<B1-Motion>", move)
+    root.bind("<Button-3>", close)
 
     def tick():
         try:
@@ -237,34 +225,14 @@ def run(monitor, fps, record=True, bb=None):
             if tracker:
                 tracker.feed(img)
             h = engine.step(img)
-            if h is None:
-                big.config(text="—", fg="#777")
-                n = getattr(engine.prof, "hand_no", 0)
-                mid.config(text=f"нет ваших карт на экране\nнаблюдаю за столом: раздач записано {n}")
-            else:
-                col = COLORS.get(h["act"].split()[0], "#fff")
-                wait = "" if h["my_turn"] else "   (пока не ваш ход)"
-                if h.get("unread"):
-                    wait += "   (?) сумму на кнопке не прочитал"
-                big.config(text=f"{h['act']}{wait}", fg=col)
-                cards = " ".join(pt.card_str(c) for c in h["hole"])
-                board = " ".join(pt.card_str(c) for c in h["board"]) or "до флопа"
-                info = f"{cards}  |  {board}\n{h['desc']}\nШанс выиграть ~{h['eq']:.0%} против {h['n_opp']} соп."
-                if h["to_call"]:
-                    info += f"  ·  колл {h['to_call']:,}".replace(",", " ")
-                if h.get("pos"):
-                    info += f"\nПозиция: {players.POS_NAME[h['pos']]}"
-                if h["my_stack"]:
-                    info += f"\nВаш стек {h['my_stack']:,} (~{h['my_stack'] / h['bb']:.0f} BB)".replace(",", " ")
-                    if h["risk"]:
-                        info += f"  ·  {h['risk']}"
-                info += f"\n{h['why']}"
-                if h["opps"]:
-                    info += "\n" + "\n".join(h["opps"])
-                mid.config(text=info)
+            view.show(hud.build_view(h, hands_seen=getattr(engine.prof, "hand_no", 0)))
         except Exception as e:  # не падаем из-за одного плохого кадра
-            mid.config(text=f"ошибка кадра: {e}")
-        root.after(int(1000 / fps), tick)
+            try:
+                view.show_error(f"ошибка кадра: {e}")
+            except Exception:
+                print(f"ошибка кадра: {e}", flush=True)
+        finally:
+            root.after(int(1000 / fps), tick)  # следующий кадр - даже если этот не нарисовался
 
     print(f"Подсказка запущена ({VERSION}): окно в левом верхнем углу экрана.")
     print("Перетащите его мышью куда удобно. Закрыть: правый клик по окну.")
