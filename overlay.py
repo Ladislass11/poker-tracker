@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Окно-подсказка поверх игры + запись раздач."""
-VERSION = "версия 9 (27.11)"
+VERSION = "версия 10 (27.11)"
 import time
 from collections import Counter
 
@@ -19,8 +19,11 @@ class HintEngine:
         self.bb_seen = Counter()
         self.prof = players.Profiles()
         self.cur_hole = None
+        self.fixed_bb = None
 
     def bb(self):
+        if self.fixed_bb:
+            return self.fixed_bb
         # большой блайнд = самая частая сумма колла до флопа (нужно хотя бы 3 раза)
         common = [a for a, n in self.bb_seen.most_common() if n >= 3]
         return common[0] if common else 500
@@ -89,6 +92,9 @@ class HintEngine:
         bettor_id = self.prof.seat_id.get(bettor["seat"]) if bettor else None
         style = self.prof.style(bettor_id)
         shift = {"aggr": -1, "passive": 1}.get(style, 0) if to_call else 0
+        # стол агрессивный: обычная ставка неизвестного игрока - ещё не сильная рука (рейз - уже да)
+        if to_call and board and style is None and bettor and bettor["status"] == "bet":
+            shift = -1
         bb = self.bb()
         opp_short = bool(bettor and bettor["stack"] is not None and to_call
                          and bettor["stack"] < bb * 2 and to_call <= 15 * bb)  # пошёл ол-ин с коротким стеком
@@ -124,7 +130,7 @@ class HintEngine:
         return self.last
 
 
-def run(monitor, fps, record=True):
+def run(monitor, fps, record=True, bb=None):
     import mss
     try:
         import tkinter as tk
@@ -133,6 +139,7 @@ def run(monitor, fps, record=True):
     writer = pt.CsvWriter(pt.CSV_PATH) if record else None
     tracker = pt.Tracker(writer) if record else None
     engine = HintEngine()
+    engine.fixed_bb = bb
     sct = mss.MSS() if hasattr(mss, 'MSS') else mss.mss()
 
     def grab():

@@ -295,6 +295,8 @@ def board_danger(hole, board):
 # ---------------------------------------------------------------- совет
 PREMIUM = {"AA", "KK", "QQ", "AKs", "AKo"}
 STRONG = {"JJ", "TT", "AQs", "AQo", "AJs", "KQs"}
+# против агрессивного стола эти руки тоже коллируют стандартный рейз 3-5 BB
+GOOD = {"99", "88", "77", "AJo", "ATs", "ATo", "KQo", "KJs", "QJs", "JTs"}
 
 
 def _hand_key(hole):
@@ -383,23 +385,36 @@ def advise(hole, board, n_opp, to_call, pot, bb=500, level_shift=0, my_stack=Non
         return eq, "КОЛЛ", "короткий соперник пушит широко, ваша рука впереди его диапазона"
     if not board:
         k = _hand_key(hole)
+        raise_bb = (to_call or 0) / bb if bb else 0
         if k in PREMIUM:
-            return eq, "РЕЙЗ", f"сильнейшая рука; на рейз соперника можно переповысить или идти до конца"
+            if raise_bb > 1:
+                return eq, "РЕЙЗ (×3) или ОЛ-ИН", "сильнейшая рука: на этом столе рейзят широко, переповышайте"
+            return eq, "РЕЙЗ ~4 BB", "сильнейшая рука; на ре-рейз - ол-ин"
         if k in STRONG:
-            if to_call and to_call > 8 * bb:
-                return eq, "ФОЛД", "рейз слишком крупный для этой руки"
-            return eq, ("РЕЙЗ ~3 BB" if (to_call or 0) <= bb else "КОЛЛ"), "сильная рука"
+            if raise_bb > 15:
+                return eq, "ФОЛД", "рейз слишком крупный даже для этой руки"
+            if raise_bb > 1:
+                return eq, "КОЛЛ", "сильная рука против широкого рейза (3-5 BB тут стандарт)"
+            return eq, "РЕЙЗ ~4 BB", "сильная рука"
         if pos == "bb" and not to_call:
             return eq, "ЧЕК", "вы на большом блайнде, флоп бесплатно"
+        if k in GOOD:
+            if raise_bb <= 1:
+                return eq, ("РЕЙЗ ~3 BB" if pos in ("btn", "late", "middle") else "КОЛЛ"), "хорошая рука"
+            if raise_bb <= 6:
+                return eq, "КОЛЛ", "стандартный рейз этого стола, рука достаточно хорошая"
+            return eq, "ФОЛД", "рейз крупнее обычного"
         if _playable(hole, pos):
             if not to_call:
                 return eq, "ЧЕК", "бесплатно смотрим флоп"
-            if to_call <= bb and pos in ("btn", "late"):
+            if raise_bb <= 1 and pos in ("btn", "late"):
                 return eq, "РЕЙЗ ~3 BB", "поздняя позиция: если до вас все сбросили, забираем блайнды; если были коллы - просто КОЛЛ"
-            if to_call <= bb:
+            if raise_bb <= 1:
                 return eq, "КОЛЛ", "дёшево, рука играбельная" + (" (ранняя позиция, на рейз - фолд)" if pos == "early" else "")
-            if to_call <= 3 * bb and (hole[0][0] == hole[1][0] or hole[0][1] == hole[1][1]):
-                return eq, "КОЛЛ", "небольшой рейз, играем на сет/флеш"
+            pair_or_suited = hole[0][0] == hole[1][0] or hole[0][1] == hole[1][1]
+            limit = 4 if pos in ("btn", "late", "bb") else 3
+            if raise_bb <= limit and pair_or_suited:
+                return eq, "КОЛЛ", "стандартный рейз, играем на сет/флеш/стрит"
             return eq, "ФОЛД", "дорого для этой руки"
         return eq, ("ЧЕК" if not to_call else "ФОЛД"), "слабая рука" + (" для ранней позиции" if pos == "early" and _playable(hole) else "")
     # после флопа
@@ -411,8 +426,8 @@ def advise(hole, board, n_opp, to_call, pot, bb=500, level_shift=0, my_stack=Non
     if not to_call:
         p = pot or 0
         if eq >= 0.8:
-            size = f" ~{int(p * 0.6):,}".replace(",", " ") if p else ""
-            return eq, "СТАВКА" + size, "рука, скорее всего, лучшая: берём деньги"
+            size = f" ~{int(p * 0.75):,}".replace(",", " ") if p else ""
+            return eq, "СТАВКА" + size, "рука, скорее всего, лучшая: тут часто платят, ставим крупно"
         if eq >= 0.62 or (eq >= 0.5 and n_opp == 1 and len(board) < 5):
             size = f" ~{int(p * 0.35):,}".replace(",", " ") if p else ""
             return eq, "МАЛЕНЬКАЯ СТАВКА" + size, "вы, вероятно, впереди, но рука не железная"

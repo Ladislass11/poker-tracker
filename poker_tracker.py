@@ -392,6 +392,7 @@ if __name__ == "__main__":
     ap.add_argument("--monitor", type=int, default=1, help="номер монитора (1 = основной)")
     ap.add_argument("--fps", type=float, default=3)
     ap.add_argument("--hints", action="store_true", help="окно с подсказками поверх игры")
+    ap.add_argument("--bb", type=int, default=None, help="большой блайнд стола (если не указан - определяется сам)")
     a = ap.parse_args()
     if a.report:
         report()
@@ -401,6 +402,6 @@ if __name__ == "__main__":
         run_test(a.test)
     elif a.hints:
         import overlay
-        overlay.run(a.monitor, a.fps)
+        overlay.run(a.monitor, a.fps, bb=a.bb)
     else:
         run_live(a.monitor, a.fps)
