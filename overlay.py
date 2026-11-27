@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Окно-подсказка поверх игры + запись раздач."""
-VERSION = "версия 7 (27.11)"
+VERSION = "версия 8 (27.11)"
 import time
 from collections import Counter
 
@@ -35,6 +35,14 @@ class HintEngine:
         board, other = pt.read_screen(img)
         seats = players.read_seats(img)
         me = next((s for s in seats if s["me"]), None)
+        # когда над вашей панелью жёлтая надпись ("Уравнял ставку"), слова "Вы" не видно -
+        # берём ваше место из прошлых кадров
+        if me:
+            self.my_seat = me["seat"]
+        elif getattr(self, "my_seat", None) is not None:
+            me = next((s for s in seats if s["seat"] == self.my_seat), None)
+            if me:
+                me["me"] = True
         # ваши карты лежат прямо над вашей панелью (у соперников на вскрытии - над их панелями)
         mine = []
         if me:
