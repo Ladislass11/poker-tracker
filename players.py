@@ -63,14 +63,26 @@ def read_seat(img, i):
     cs = [tuple(st[j][:4]) for j in range(1, n)
           if H * .008 <= st[j][3] < H * .03 and st[j][2] < H * .03 and st[j][0] < c.shape[1] * .45]
     if not cs:
-        return None
+        # панель сбросившего игрока затемнена, монета тусклая: ищем её только внутри панели, на строке стека
+        ry0, ry1 = int((sy + 55) / 1439 * H) - y0, int((sy + 90) / 1439 * H) - y0
+        rx0, rx1 = int((sx + 92) / 2559 * W) - x0, int((sx + 138) / 2559 * W) - x0
+        sub = np.zeros_like(coin)
+        sub[ry0:ry1, rx0:rx1] = ((h >= 10) & (h <= 30) & (s > 100) & (v > 50))[ry0:ry1, rx0:rx1]
+        n, _, st, _ = cv2.connectedComponentsWithStats(sub.astype(np.uint8))
+        cs = [tuple(st[j][:4]) for j in range(1, n)
+              if H * .008 <= st[j][3] < H * .03 and st[j][2] < H * .03 and st[j][4] > 0.3 * st[j][2] * st[j][3]]
+        if not cs:
+            return None
+        dim = True
+    else:
+        dim = False
     cx, cy, cw, ch = max(cs, key=lambda a: a[2] * a[3])
     res = {"seat": i, "id": None, "me": False, "status": None, "stack": None}
     # стек
     band = c[max(0, cy - 2):cy + ch + 2, cx + cw + 2:]
     bh = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
     bg, top = np.median(bh[..., 2]), np.percentile(bh[..., 2], 99)
-    ink = ((bh[..., 2] > bg + max(55, 0.6 * (top - bg))) & (bh[..., 1] < 70)).astype(np.uint8)
+    ink = ((bh[..., 2] > bg + max(30 if dim else 55, 0.6 * (top - bg))) & (bh[..., 1] < 70)).astype(np.uint8)
     sc = _comps(ink, int(H * .008))
     if 1 <= len(sc) <= 8:
         txt = _read_glyphs(ink, sc)
@@ -83,7 +95,8 @@ def read_seat(img, i):
     # берём относительно самого яркого жёлтого в строке (в тёмных залах текст тусклее)
     yl = (nh[..., 0] >= 18) & (nh[..., 0] <= 35) & (nh[..., 1] > 90)
     vmax = float(nh[..., 2][yl].max()) if yl.any() else 0
-    yellow = (yl & (nh[..., 2] > max(70, 0.6 * vmax))).astype(np.uint8)
+    # vmax < 120 - это не надпись, а жёлтый рисунок сукна сквозь полупрозрачную панель
+    yellow = (yl & (nh[..., 2] > max(70, 0.6 * vmax)) & (vmax >= 120)).astype(np.uint8)
     if yellow.sum() > 40:
         ys, xs = np.nonzero(yellow)
         crop = yellow[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
@@ -93,9 +106,9 @@ def read_seat(img, i):
         k = min(d, key=d.get)
         if d[k] < 0.25:
             res["status"] = SHORT[k]
-    else:
+    if res["status"] is None:  # не надпись-действие (или жёлтый рисунок сукна) - читаем номер игрока
         bg, top = np.median(nh[..., 2]), np.percentile(nh[..., 2], 99)
-        wink = ((nh[..., 2] > bg + max(55, 0.6 * (top - bg))) & (nh[..., 1] < 70)).astype(np.uint8)
+        wink = ((nh[..., 2] > bg + max(30 if dim else 55, 0.6 * (top - bg))) & (nh[..., 1] < 70)).astype(np.uint8)
         wc = _comps(wink, int(H * .008))
         first = _read_glyphs(wink, wc[:1]) if wc else None
         txt = _read_glyphs(wink, wc) if wc else None
@@ -184,8 +197,10 @@ class Profiles:
         if self.street is None:
             self.new_hand()
         # новая раздача: значок D переехал (видно 2 кадра подряд) или стол очистился после флопа
+        raw = dealer
         cand, self._d_prev = (dealer if dealer is not None and dealer == getattr(self, "_d_prev", None) else None), dealer
         dealer = cand
+        switching = raw is not None and self.dealer is not None and raw != self.dealer and cand is None
         if dealer is not None and self.dealer is not None and dealer != self.dealer:
             self.new_hand()
         elif board_len == 0 and self.prev_board >= 3 and self.dealer is None:
@@ -197,6 +212,8 @@ class Profiles:
             self.street = board_len
             self.street_bet = False
             self.last_status = {}
+        if switching:
+            return  # значок дилера переехал только что: действия засчитаем со следующего кадра, уже в новой раздаче
         for s in seats:
             i = s["seat"]
             if s["me"]:
