@@ -21,6 +21,7 @@ SHORT = {"Повысил ставку": "raise", "Поставил ставку"
          "Пропустил ход": "check", "Сбросил карты": "fold"}
 PROFILES = os.path.join(pt.HERE, "players.json")
 ACTIONS_LOG = os.path.join(pt.HERE, "actions_log.csv")
+DECAY = 0.97
 
 # места игроков (левый верхний угол панели) для экрана 2559x1439, дальше масштабируется
 SLOTS = [(136, 193), (2096, 193), (136, 793), (2096, 793), (723, 1075), (1509, 1075)]
@@ -235,6 +236,11 @@ class Profiles:
             flags = self.hand_flags.setdefault(pid, set())
             if s["in_hand"] and "dealt" not in flags and self.street == 0:
                 flags.add("dealt")
+                # боты со временем меняют стиль: старые раздачи постепенно "забываются"
+                # (каждая новая раздача уменьшает вес прошлых на 3%, память примерно 30-40 раздач)
+                for f in self.FIELDS:
+                    if f != "shows":
+                        prof[f] = round(prof[f] * DECAY, 3)
                 prof["hands"] += 1
             st = s["status"]
             stack = s["stack"]
@@ -291,7 +297,7 @@ class Profiles:
         pid = self.seat_id.get(seat)
         if pid and pid != "me":
             prof = self.get(pid)
-            entry = " ".join(cards) + " | " + " ".join(board)
+            entry = " ".join(sorted(cards)) + " | " + " ".join(board)
             if entry not in prof["shows"]:
                 prof["shows"] = (prof["shows"] + [entry])[-8:]
                 self._log([getattr(self, "hand_no", 0), "showdown", seat, pid, "show", "", "", entry])
@@ -311,7 +317,7 @@ class Profiles:
     def summary(self, pid):
         s = self.stats(pid)
         if s["hands"] < 10:
-            return f"{pid}: мало данных ({s['hands']} р.)"
+            return f"{pid}: мало данных ({s['hands']:.0f} р.)"
         tags = []
         if s["vpip"] is not None:
             tags.append("играет много рук" if s["vpip"] > 0.45 else ("тайтовый" if s["vpip"] < 0.2 else f"входит {s['vpip']:.0%}"))
@@ -319,7 +325,7 @@ class Profiles:
             tags.append("агрессивный" if s["af"] >= 2.5 else ("пассивный" if s["af"] <= 0.8 else "средняя агрессия"))
         if s["fvb"] is not None:
             tags.append(f"фолд на ставку {s['fvb']:.0%}")
-        return f"{pid} ({s['hands']} р.): " + ", ".join(tags)
+        return f"{pid} (~{s['hands']:.0f} р.): " + ", ".join(tags)
 
     def style(self, pid):
         """'aggr' / 'passive' / None - для поправки диапазона."""

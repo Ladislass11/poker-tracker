@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Окно-подсказка поверх игры + запись раздач."""
-VERSION = "версия 13 (27.11)"
+VERSION = "версия 14 (27.11)"
 import time
 from collections import Counter
 
