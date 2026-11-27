@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Окно-подсказка поверх игры + запись раздач."""
-VERSION = "версия 11 (27.11)"
+VERSION = "версия 12 (27.11)"
 import time
 from collections import Counter
 
@@ -104,14 +104,24 @@ class HintEngine:
         if to_call and board and style is None and bettor and bettor["status"] == "bet":
             shift = -1
         bb = self.bb()
+        # кто повысил до флопа: маньяк (рейзит почти всё) или тайтовый (только сильные руки)
+        raiser = None
+        if not board and bettor_id and bettor_id != "me":
+            d = self.prof.get(bettor_id)
+            n = d["hands"]
+            if n >= 15:
+                if d["pfr"] / n >= 0.35 or d["vpip"] / n >= 0.7:
+                    raiser = "maniac"
+                elif d["vpip"] / n <= 0.3 and d["pfr"] / n <= 0.2:
+                    raiser = "tight"
         opp_short = bool(bettor and bettor["stack"] is not None and to_call
                          and bettor["stack"] < bb * 2 and to_call <= 15 * bb)  # пошёл ол-ин с коротким стеком
         pos = players.my_position(seats, dealer)
-        key = (hole, tuple(board), to_call, pot, n_opp, my_stack, shift, opp_short, pos, prior_aggr)
+        key = (hole, tuple(board), to_call, pot, n_opp, my_stack, shift, opp_short, pos, prior_aggr, raiser)
         if key != self.last_key:
             eq, act, why = hints.advise(list(hole), list(board), n_opp, to_call, pot, bb,
                                         level_shift=shift, my_stack=my_stack, opp_short=opp_short, pos=pos,
-                                        prior_aggr=prior_aggr)
+                                        prior_aggr=prior_aggr, raiser=raiser)
             # блеф против тех, кто часто сбрасывает на ставку
             if board and not to_call and act == "ЧЕК" and in_hand:
                 fv = [self.prof.stats(self.prof.seat_id.get(s["seat"]))["fvb"] if self.prof.seat_id.get(s["seat"]) else None

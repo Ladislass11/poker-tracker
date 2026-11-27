@@ -79,7 +79,11 @@ def read_seat(img, i):
     # строка над стеком: ID, "Вы" или действие
     nb = c[max(0, cy - int(H * .036)):cy - int(H * .004), max(0, cx - 2):int(c.shape[1] * .86)]  # без значка D
     nh = cv2.cvtColor(nb, cv2.COLOR_BGR2HSV)
-    yellow = ((nh[..., 0] >= 18) & (nh[..., 0] <= 35) & (nh[..., 1] > 110) & (nh[..., 2] > 110)).astype(np.uint8)
+    # жёлтый текст действия; у сбросившего игрока панель затемнена, поэтому порог яркости
+    # берём относительно самого яркого жёлтого в строке (в тёмных залах текст тусклее)
+    yl = (nh[..., 0] >= 18) & (nh[..., 0] <= 35) & (nh[..., 1] > 90)
+    vmax = float(nh[..., 2][yl].max()) if yl.any() else 0
+    yellow = (yl & (nh[..., 2] > max(70, 0.6 * vmax))).astype(np.uint8)
     if yellow.sum() > 40:
         ys, xs = np.nonzero(yellow)
         crop = yellow[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
