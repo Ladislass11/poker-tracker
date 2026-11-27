@@ -22,6 +22,11 @@ SHORT = {"Повысил ставку": "raise", "Поставил ставку"
 PROFILES = os.path.join(pt.HERE, "players.json")
 ACTIONS_LOG = os.path.join(pt.HERE, "actions_log.csv")
 DECAY = 0.97
+# Хватает ли данных, считаем по полному числу наблюдений (без "забывания"): забывающий счётчик
+# не поднимается выше ~33 x (частота действия), и у тайтового бота никогда не дошёл бы до порога.
+MIN_ACTS = 8    # ставок + рейзов + коллов, чтобы судить об агрессии
+MIN_FACED = 5   # ставок против игрока, чтобы считать его фолд на ставку
+MIN_RECENT_ACTS = 1  # ставок + рейзов + коллов по весу среди недавних раздач, чтобы судить об агрессии сейчас
 
 # места игроков (левый верхний угол панели) для экрана 2559x1439, дальше масштабируется
 SLOTS = [(136, 193), (2096, 193), (136, 793), (2096, 793), (723, 1075), (1509, 1075)]
@@ -153,17 +158,32 @@ class Profiles:
         self.raw_stack = {}
         self.pending = {}
         self.prev_board = 0
+        self.seen_status = {}    # место -> последняя надпись-действие на этой улице (для поиска ставящего)
+        self.status_cand = {}    # место -> новая надпись, прочитанная пока только на одном кадре
+        self.last_aggressor = None  # место, где последним появилась надпись "ставка/рейз" на этой улице
+        self.cur_shows = {}      # место -> вскрытие в текущей раздаче (одна запись, с самым полным столом)
 
     def get(self, pid):
         d = self.p.setdefault(pid, {})
         for f in self.FIELDS:
             d.setdefault(f, [] if f == "shows" else 0)
+        # счётчики без "забывания"; в старых профилях их нет - берём текущие значения как нижнюю оценку
+        d.setdefault("seen_acts", d["bet"] + d["raise"] + d["call"])
+        d.setdefault("seen_faced", d["faced"])
         return d
 
+    def close(self):
+        """Выход из программы: дописать в журнал незаписанные вскрытия и сохранить профили."""
+        self._flush_shows()
+        self.save()
+
     def save(self):
+        # округляем только при записи в файл: в памяти счётчики должны плавно "забываться" до нуля
+        out = {pid: {k: (round(v, 6) if isinstance(v, float) else v) for k, v in d.items()}
+               for pid, d in self.p.items()}
         try:
             with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(self.p, f, ensure_ascii=False)
+                json.dump(out, f, ensure_ascii=False)
         except Exception:
             pass
 
@@ -173,6 +193,9 @@ class Profiles:
         if ticks - getattr(self, "_last_new", -100) < 10 and self.street == 0:
             return  # новая раздача уже засчитана пару секунд назад
         self._last_new = ticks
+        self._flush_shows()
+        self.cur_shows = {}
+        self._new_street()
         self.hand_flags = {}
         self.last_status = {}
         self.street = 0
@@ -192,6 +215,39 @@ class Profiles:
                 w.writerow([time.strftime("%Y-%m-%d %H:%M:%S")] + row)
         except Exception:
             pass
+
+    def _new_street(self):
+        self.seen_status = {}
+        self.status_cand = {}
+        self.last_aggressor = None
+
+    def _track_aggressor(self, i, st):
+        """Запоминает место, где последней появилась надпись "ставка/рейз" (порядок мест тут не важен).
+        Новая надпись засчитывается, только если прочитана 2 кадра подряд: один неверный кадр не в счёт."""
+        if not st:
+            return  # надпись на этом кадре не прочиталась
+        if st == self.seen_status.get(i):
+            self.status_cand.pop(i, None)
+            return
+        if self.status_cand.get(i) != st:
+            self.status_cand[i] = st
+            return
+        del self.status_cand[i]
+        self.seen_status[i] = st
+        if st in ("bet", "raise"):
+            self.last_aggressor = i
+
+    def _mark_dealt(self, prof, flags):
+        """Игрок получил карты в этой раздаче: +1 раздача, вес прошлых раздач уменьшается."""
+        if "dealt" in flags:
+            return
+        flags.add("dealt")
+        # боты со временем меняют стиль: старые раздачи постепенно "забываются"
+        # (каждая новая раздача уменьшает вес прошлых на 3%, память примерно 30-40 раздач)
+        for f in self.FIELDS:
+            if f != "shows":
+                prof[f] *= DECAY
+        prof["hands"] += 1
 
     def update(self, seats, board_len, dealer=None):
         self._ticks = getattr(self, "_ticks", 0) + 1
@@ -213,6 +269,7 @@ class Profiles:
             self.street = board_len
             self.street_bet = False
             self.last_status = {}
+            self._new_street()
         if switching:
             return  # значок дилера переехал только что: действия засчитаем со следующего кадра, уже в новой раздаче
         for s in seats:
@@ -220,6 +277,7 @@ class Profiles:
             if s["me"]:
                 self.seat_id[i] = "me"
                 continue
+            self._track_aggressor(i, s["status"])  # и для мест, чей номер ещё не прочитан
             if s["id"]:
                 # голосуем только по последним 5 прочтениям: если на место сел другой игрок,
                 # его номер быстро вытеснит прежний
@@ -234,14 +292,8 @@ class Profiles:
                 continue
             prof = self.get(pid)
             flags = self.hand_flags.setdefault(pid, set())
-            if s["in_hand"] and "dealt" not in flags and self.street == 0:
-                flags.add("dealt")
-                # боты со временем меняют стиль: старые раздачи постепенно "забываются"
-                # (каждая новая раздача уменьшает вес прошлых на 3%, память примерно 30-40 раздач)
-                for f in self.FIELDS:
-                    if f != "shows":
-                        prof[f] = round(prof[f] * DECAY, 3)
-                prof["hands"] += 1
+            if s["in_hand"] and self.street == 0:
+                self._mark_dealt(prof, flags)
             st = s["status"]
             stack = s["stack"]
             street = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}.get(self.street, self.street)
@@ -252,6 +304,9 @@ class Profiles:
             self.raw_stack[i] = stack
             if st and st != self.last_status.get(i):
                 self.last_status[i] = st
+                # раз игрок действует, карты у него есть - даже если рубашки не прочитались
+                # или номер места опознан уже после раздачи (иначе VPIP/PFR обгоняют число раздач)
+                self._mark_dealt(prof, flags)
                 self._event(prof, flags, st)
                 self.pending[i] = (self.last_stack.get(i), st, street)
                 self._log([self.hand_no, street, i, pid, st, self.last_stack.get(i, ""), "", ""])
@@ -262,14 +317,20 @@ class Profiles:
                         self._log([self.hand_no, stt, i, pid, act + "_amount", stable, before - stable, ""])
                 self.last_stack[i] = stable
 
+    @staticmethod
+    def _faced_bet(prof):
+        prof["faced"] += 1
+        prof["seen_faced"] += 1
+
     def _event(self, prof, flags, st):
         pre = self.street == 0
         if st in ("bet", "raise"):
             if pre and st == "bet":
                 return  # до флопа это обычно блайнд
             if self.street_bet and not pre:
-                prof["faced"] += 1
+                self._faced_bet(prof)
             prof[st] += 1
+            prof["seen_acts"] += 1
             self.street_bet = True
             if pre:
                 if "vpip" not in flags:
@@ -280,8 +341,9 @@ class Profiles:
                     prof["pfr"] += 1
         elif st == "call":
             prof["call"] += 1
+            prof["seen_acts"] += 1
             if not pre:
-                prof["faced"] += 1
+                self._faced_bet(prof)
             if pre and "vpip" not in flags:
                 flags.add("vpip")
                 prof["vpip"] += 1
@@ -290,34 +352,61 @@ class Profiles:
         elif st == "fold":
             prof["fold"] += 1
             if self.street_bet and not pre:
-                prof["faced"] += 1
+                self._faced_bet(prof)
                 prof["fold_vs_bet"] += 1
 
     def add_show(self, seat, cards, board):
+        """Карты соперника на вскрытии. При ол-ине стол докладывается уже после вскрытия,
+        поэтому на раздачу и место храним одну запись - с самым полным столом."""
         pid = self.seat_id.get(seat)
-        if pid and pid != "me":
-            prof = self.get(pid)
-            entry = " ".join(sorted(cards)) + " | " + " ".join(board)
-            if entry not in prof["shows"]:
-                prof["shows"] = (prof["shows"] + [entry])[-8:]
-                self._log([getattr(self, "hand_no", 0), "showdown", seat, pid, "show", "", "", entry])
+        if not pid or pid == "me":
+            return
+        prev = self.cur_shows.get(seat)
+        if prev and prev["pid"] == pid and len(board) <= prev["board_len"]:
+            return  # эту раздачу уже записали, и стол с тех пор не дополнился
+        prof = self.get(pid)
+        entry = " ".join(sorted(cards)) + " | " + " ".join(board)
+        shows = prof["shows"]
+        if prev and prev["pid"] == pid:
+            shows = [e for e in shows if e != prev["entry"]]  # заменяем запись с неполным столом
+        if entry not in shows:
+            shows = (shows + [entry])[-8:]
+        prof["shows"] = shows
+        self.cur_shows[seat] = {"pid": pid, "entry": entry, "board_len": len(board),
+                                "hand": getattr(self, "hand_no", 0), "logged": False}
+        if len(board) == 5:
+            self._flush_shows()
+
+    def _flush_shows(self):
+        """Пишет вскрытия текущей раздачи в журнал (каждое один раз)."""
+        for seat, sh in self.cur_shows.items():
+            if not sh["logged"]:
+                sh["logged"] = True
+                self._log([sh["hand"], "showdown", seat, sh["pid"], "show", "", "", sh["entry"]])
 
     def stats(self, pid):
         d = self.get(pid)
         n = d["hands"]
         aggr = d["bet"] + d["raise"]
+        if aggr + d["call"] < MIN_RECENT_ACTS:
+            af = None  # недавно почти не действовал: о текущей агрессии судить рано
+        elif d["call"]:
+            af = aggr / d["call"]
+        else:
+            af = float("inf")  # только ставки и рейзы, ни одного колла
         return {
             "hands": n,
             "vpip": d["vpip"] / n if n else None,
-            "af": aggr / d["call"] if d["call"] else (float(aggr) if aggr else None),
-            "fvb": d["fold_vs_bet"] / d["faced"] if d["faced"] >= 5 else None,
+            "af": af,
+            "fvb": d["fold_vs_bet"] / d["faced"] if d["seen_faced"] >= MIN_FACED and d["faced"] else None,
             "faced": d["faced"],
         }
 
     def summary(self, pid):
         s = self.stats(pid)
         if s["hands"] < 10:
-            return f"{pid}: мало данных ({s['hands']:.0f} р.)"
+            # int(), а не :.0f - иначе 9.7 раздачи показывалось бы как "мало данных (10 р.)"
+            return f"{pid}: мало данных ({int(s['hands'])} р.)"
         tags = []
         if s["vpip"] is not None:
             tags.append("играет много рук" if s["vpip"] > 0.45 else ("тайтовый" if s["vpip"] < 0.2 else f"входит {s['vpip']:.0%}"))
@@ -341,7 +430,7 @@ class Profiles:
 
 
 def d_enough(d):
-    return d["bet"] + d["raise"] + d["call"] >= 8
+    return d["seen_acts"] >= MIN_ACTS
 
 
 # ---------------------------------------------------------------- дилер и позиция

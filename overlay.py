@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Окно-подсказка поверх игры + запись раздач."""
-VERSION = "версия 14 (27.11)"
+VERSION = "версия 15 (27.11)"
 import time
 from collections import Counter
 
@@ -19,6 +19,7 @@ class HintEngine:
         self.bb_seen = Counter()
         self.prof = players.Profiles()
         self.cur_hole = None
+        self.hole_cand = None  # новые карты, прочитанные пока только на одном кадре
         self.fixed_bb = None
 
     def bb(self):
@@ -55,9 +56,17 @@ class HintEngine:
         hole = tuple(sorted(o[0] for o in mine)) if len(mine) == 2 else None
         others = [o for o in other if o not in mine]
         if hole and hole != self.cur_hole and not board:
-            self.cur_hole = hole
-            self.prof.new_hand()
-            self.aggr_streets = set()
+            # новая раздача - только если новые карты прочитаны 2 кадра подряд:
+            # один размытый кадр не должен засчитывать всем соперникам лишнюю раздачу
+            if hole == self.hole_cand:
+                self.cur_hole = hole
+                self.hole_cand = None
+                self.prof.new_hand()
+                self.aggr_streets = set()
+            else:
+                self.hole_cand = hole
+        else:
+            self.hole_cand = None
         dealer = players.find_dealer(img)
         self.prof.update(seats, len(board), dealer)
         # вскрытие: карты соперников запоминаем в их профиль
@@ -89,8 +98,12 @@ class HintEngine:
         in_hand = [s for s in seats if not s["me"] and s["in_hand"]]
         n_opp = len(in_hand) or hints.count_opponents(img)
         my_stack = me["stack"] if me else None
-        # кто поставил: последний с действием "ставка/рейз"
-        bettor = next((s for s in in_hand if s["status"] in ("bet", "raise")), None)
+        # кто поставил: место, где надпись "ставка/рейз" появилась последней на этой улице;
+        # если это не отследили - любой соперник с такой надписью
+        agg = self.prof.last_aggressor
+        bettor = next((s for s in in_hand if s["seat"] == agg and s["status"] in ("bet", "raise")), None)
+        if bettor is None:
+            bettor = next((s for s in in_hand if s["status"] in ("bet", "raise")), None)
         # запоминаем, что соперник ставил/повышал после флопа в этой раздаче
         if not hasattr(self, "aggr_streets"):
             self.aggr_streets = set()
@@ -179,6 +192,7 @@ def run(monitor, fps, record=True, bb=None):
         except KeyboardInterrupt:
             if tracker:
                 tracker.finish()
+            engine.prof.close()
         return
 
     root = tk.Tk()
@@ -256,6 +270,6 @@ def run(monitor, fps, record=True, bb=None):
     print("Перетащите его мышью куда удобно. Закрыть: правый клик по окну.")
     root.after(300, tick)
     root.mainloop()
-    engine.prof.save()
+    engine.prof.close()
     if tracker:
         print(f"Записано раздач: {tracker.hand_no}")
