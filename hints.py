@@ -359,6 +359,12 @@ def _call_allin_ok(hole, bbs, opp_short):
     return opp_short and a == 12 and b >= 11
 
 
+def price(to_call, pot):
+    """Какой шанс нужен, чтобы колл окупился: колл / (банк + ставка соперника + ваш колл)."""
+    total = (pot or 0) + 2 * to_call
+    return to_call / total if total else 0.5
+
+
 def advise(hole, board, n_opp, to_call, pot, bb=500, level_shift=0, my_stack=None, opp_short=False, pos=None,
            prior_aggr=False, raiser=None):
     """Возвращает (шансы 0..1, действие, пояснение)."""
@@ -435,8 +441,7 @@ def advise(hole, board, n_opp, to_call, pot, bb=500, level_shift=0, my_stack=Non
             size = f" ~{int(p * 0.35):,}".replace(",", " ") if p else ""
             return eq, "МАЛЕНЬКАЯ СТАВКА" + size, "вы, вероятно, впереди, но рука не железная"
         return eq, "ЧЕК", "ставить нечем, смотрим карту бесплатно" if len(board) < 5 else "лучше вскрыться бесплатно"
-    pot_total = (pot or 0) + 2 * to_call
-    need = to_call / pot_total if pot_total else 0.5
+    need = price(to_call, pot)
     big = pot and to_call > 0.75 * pot
     margin = 0.03
     if eq >= 0.8:
