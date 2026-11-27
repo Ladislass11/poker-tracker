@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Окно-подсказка поверх игры + запись раздач."""
-VERSION = "версия 10 (27.11)"
+VERSION = "версия 11 (27.11)"
 import time
 from collections import Counter
 
@@ -58,9 +58,17 @@ class HintEngine:
             self.cur_hole = hole
             self.prof.new_hand()
             self.aggr_streets = set()
-        self.prof.update(seats, len(board))
+        dealer = players.find_dealer(img)
+        self.prof.update(seats, len(board), dealer)
         # вскрытие: карты соперников запоминаем в их профиль
-        if len(board) == 5 and len(others) >= 2:
+        # на вскрытии часть карт стола затемняется и не читается - берём полный стол, запомненный раньше
+        hand_no = getattr(self.prof, "hand_no", 0)
+        if getattr(self, "_board_hand", None) != hand_no:
+            self._board_hand, self.board5 = hand_no, None
+        if len(board) >= len(self.board5 or []):
+            self.board5 = list(board)
+        show_board = board if len(board) >= len(self.board5 or []) else self.board5
+        if show_board and len(show_board) >= 3 and len(others) >= 2:
             for s in seats:
                 if s["me"]:
                     continue
@@ -68,7 +76,7 @@ class HintEngine:
                 cx, cy = (px + 167) / 2559, (py - 93) / 1439
                 near = [o for o in others if abs(o[1] - cx) < 0.06 and abs(o[2] - cy) < 0.07]
                 if len(near) == 2:
-                    self.prof.add_show(s["seat"], [o[0] for o in near], board)
+                    self.prof.add_show(s["seat"], [o[0] for o in near], show_board)
         my_turn, to_call = hints.read_buttons(img)
         if not hole or to_call == "none":
             return None  # вы не в раздаче или идёт вскрытие
@@ -98,7 +106,7 @@ class HintEngine:
         bb = self.bb()
         opp_short = bool(bettor and bettor["stack"] is not None and to_call
                          and bettor["stack"] < bb * 2 and to_call <= 15 * bb)  # пошёл ол-ин с коротким стеком
-        pos = players.my_position(seats, players.find_dealer(img))
+        pos = players.my_position(seats, dealer)
         key = (hole, tuple(board), to_call, pot, n_opp, my_stack, shift, opp_short, pos, prior_aggr)
         if key != self.last_key:
             eq, act, why = hints.advise(list(hole), list(board), n_opp, to_call, pot, bb,
@@ -207,7 +215,8 @@ def run(monitor, fps, record=True, bb=None):
             h = engine.step(img)
             if h is None:
                 big.config(text="—", fg="#777")
-                mid.config(text="нет ваших карт на экране")
+                n = getattr(engine.prof, "hand_no", 0)
+                mid.config(text=f"нет ваших карт на экране\nнаблюдаю за столом: раздач записано {n}")
             else:
                 col = COLORS.get(h["act"].split()[0], "#fff")
                 wait = "" if h["my_turn"] else "   (пока не ваш ход)"

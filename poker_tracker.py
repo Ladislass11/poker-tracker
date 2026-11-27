@@ -118,12 +118,23 @@ def read_card(crop):
     return R_KEYS[int(dr.argmin())] + S_KEYS[int(ds.argmin())]
 
 
+def _card_crop(img, box):
+    """Вырезает карту. Если карта победителя приподнята и обрезана верхним краем экрана - дорисовываем верх."""
+    x, y, w, h = box
+    c = img[y:y + h, x:x + w]
+    full = int(round(w / 0.68))
+    if y <= 1 and full > h:
+        pad = np.full((full - h, w, 3), 252, np.uint8)
+        c = np.vstack([pad, c])
+    return cv2.resize(c, (CW, CH), interpolation=cv2.INTER_AREA)
+
+
 def read_screen(img):
     """Находит открытые карты. Возвращает (стол, остальные карты [(код, x, y)])."""
     H, W = img.shape[:2]
     board, other = [], []
     for (x, y, w, h) in _card_boxes(img):
-        crop = cv2.resize(img[y:y + h, x:x + w], (CW, CH), interpolation=cv2.INTER_AREA)
+        crop = _card_crop(img, (x, y, w, h))
         code = read_card(crop)
         if not code:
             continue
@@ -253,7 +264,7 @@ def annotate(img, out_path):
     board, other = read_screen(img)
     vis = img.copy()
     for (x, y, w, h) in _card_boxes(img):
-        crop = cv2.resize(img[y:y + h, x:x + w], (CW, CH), interpolation=cv2.INTER_AREA)
+        crop = _card_crop(img, (x, y, w, h))
         code = read_card(crop)
         col = (0, 200, 0) if code else (0, 0, 255)
         cv2.rectangle(vis, (x, y), (x + w, y + h), col, 3)

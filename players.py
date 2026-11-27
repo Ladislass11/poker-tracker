@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """Панели игроков: ID, стек, действие. Профили соперников между сессиями."""
+import csv
 import json
 import os
+import time
 from collections import Counter
 
 import cv2
@@ -18,6 +20,7 @@ ST_R = {k[2:]: float(_t[k]) for k in _t.files if k.startswith("q_")}
 SHORT = {"Повысил ставку": "raise", "Поставил ставку": "bet", "Уравнял ставку": "call",
          "Пропустил ход": "check", "Сбросил карты": "fold"}
 PROFILES = os.path.join(pt.HERE, "players.json")
+ACTIONS_LOG = os.path.join(pt.HERE, "actions_log.csv")
 
 # места игроков (левый верхний угол панели) для экрана 2559x1439, дальше масштабируется
 SLOTS = [(136, 193), (2096, 193), (136, 793), (2096, 793), (723, 1075), (1509, 1075)]
@@ -126,6 +129,12 @@ class Profiles:
         self.street = None
         self.street_bet = False
         self.hand_flags = {}     # ID -> set флагов в этой раздаче
+        self.log_path = ACTIONS_LOG if path == PROFILES else path + ".log.csv"
+        self.dealer = None
+        self.last_stack = {}
+        self.raw_stack = {}
+        self.pending = {}
+        self.prev_board = 0
 
     def get(self, pid):
         d = self.p.setdefault(pid, {})
@@ -141,15 +150,45 @@ class Profiles:
             pass
 
     def new_hand(self):
+        # защита от двойного срабатывания (смена дилера, очистка стола и ваши новые карты - почти одновременно)
+        ticks = getattr(self, "_ticks", 0)
+        if ticks - getattr(self, "_last_new", -100) < 10 and self.street == 0:
+            return  # новая раздача уже засчитана пару секунд назад
+        self._last_new = ticks
         self.hand_flags = {}
         self.last_status = {}
         self.street = 0
         self.street_bet = True  # до флопа блайнды = ставка
+        self.hand_no = getattr(self, "hand_no", 0) + 1
+        self.pending = {}
         self.save()
 
-    def update(self, seats, board_len):
+    def _log(self, row):
+        """Журнал действий: по нему потом считаются размеры рейзов и что боты показывают."""
+        try:
+            new = not os.path.exists(self.log_path)
+            with open(self.log_path, "a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(["time", "hand", "street", "seat", "player", "action", "stack", "put_in", "info"])
+                w.writerow([time.strftime("%Y-%m-%d %H:%M:%S")] + row)
+        except Exception:
+            pass
+
+    def update(self, seats, board_len, dealer=None):
+        self._ticks = getattr(self, "_ticks", 0) + 1
         if self.street is None:
             self.new_hand()
+        # новая раздача: значок D переехал (видно 2 кадра подряд) или стол очистился после флопа
+        cand, self._d_prev = (dealer if dealer is not None and dealer == getattr(self, "_d_prev", None) else None), dealer
+        dealer = cand
+        if dealer is not None and self.dealer is not None and dealer != self.dealer:
+            self.new_hand()
+        elif board_len == 0 and self.prev_board >= 3 and self.dealer is None:
+            self.new_hand()  # запасной вариант, если значок дилера не виден
+        if dealer is not None:
+            self.dealer = dealer
+        self.prev_board = board_len
         if board_len != self.street and board_len in (3, 4, 5):
             self.street = board_len
             self.street_bet = False
@@ -177,9 +216,24 @@ class Profiles:
                 flags.add("dealt")
                 prof["hands"] += 1
             st = s["status"]
+            stack = s["stack"]
+            street = {0: "preflop", 3: "flop", 4: "turn", 5: "river"}.get(self.street, self.street)
+            # стек в игре "докручивается" анимацией: верим только значению, прочитанному 2 раза подряд
+            stable = None
+            if stack is not None and stack == self.raw_stack.get(i):
+                stable = stack
+            self.raw_stack[i] = stack
             if st and st != self.last_status.get(i):
                 self.last_status[i] = st
                 self._event(prof, flags, st)
+                self.pending[i] = (self.last_stack.get(i), st, street)
+                self._log([self.hand_no, street, i, pid, st, self.last_stack.get(i, ""), "", ""])
+            if stable is not None:
+                if i in self.pending and stable != self.pending[i][0]:
+                    before, act, stt = self.pending.pop(i)
+                    if before is not None and before > stable:
+                        self._log([self.hand_no, stt, i, pid, act + "_amount", stable, before - stable, ""])
+                self.last_stack[i] = stable
 
     def _event(self, prof, flags, st):
         pre = self.street == 0
@@ -219,6 +273,7 @@ class Profiles:
             entry = " ".join(cards) + " | " + " ".join(board)
             if entry not in prof["shows"]:
                 prof["shows"] = (prof["shows"] + [entry])[-8:]
+                self._log([getattr(self, "hand_no", 0), "showdown", seat, pid, "show", "", "", entry])
 
     def stats(self, pid):
         d = self.get(pid)

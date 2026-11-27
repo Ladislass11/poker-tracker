@@ -1,5 +1,6 @@
 hands.csv
 players.json
+actions_log.csv
 report.txt
 check.png
 __pycache__/
