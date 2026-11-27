@@ -271,6 +271,27 @@ def describe(hole, board):
     return txt + (", " + ", ".join(extra) if extra else "")
 
 
+def board_danger(hole, board):
+    """Опасность доски для вашей руки: возможен флеш / стрит / фулл, а у вас рука слабее."""
+    if len(board) < 3:
+        return None
+    mine = evaluate(list(hole) + board)[0]
+    suits = Counter(c[1] for c in board)
+    s, n = suits.most_common(1)[0]
+    if n >= 3 and mine < 5:
+        return "на доске 3 карты одной масти, флеш возможен"
+    if n >= 3 and mine == 5:
+        top = max(RV[c[0]] for c in hole if c[1] == s) if any(c[1] == s for c in hole) else 0
+        if top < 13 and n >= 4:
+            return "на доске 4 карты одной масти, у соперника может быть флеш старше"
+    vals = sorted({RV[c[0]] for c in board} | ({1} if any(c[0] == "A" for c in board) else set()))
+    if mine < 4 and any(sum(1 for v in vals if lo <= v <= lo + 4) >= 3 for lo in range(1, 11)):
+        return "доска связная, стрит возможен"
+    if Counter(RV[c[0]] for c in board).most_common(1)[0][1] >= 2 and mine in (4, 5):
+        return "доска спарена, фулл-хаус возможен"
+    return None
+
+
 # ---------------------------------------------------------------- совет
 PREMIUM = {"AA", "KK", "QQ", "AKs", "AKo"}
 STRONG = {"JJ", "TT", "AQs", "AQo", "AJs", "KQs"}
@@ -336,7 +357,8 @@ def _call_allin_ok(hole, bbs, opp_short):
     return opp_short and a == 12 and b >= 11
 
 
-def advise(hole, board, n_opp, to_call, pot, bb=500, level_shift=0, my_stack=None, opp_short=False, pos=None):
+def advise(hole, board, n_opp, to_call, pot, bb=500, level_shift=0, my_stack=None, opp_short=False, pos=None,
+           prior_aggr=False):
     """Возвращает (шансы 0..1, действие, пояснение)."""
     to_call = to_call or 0
     if my_stack:
@@ -344,6 +366,8 @@ def advise(hole, board, n_opp, to_call, pot, bb=500, level_shift=0, my_stack=Non
     level = 0
     if board and to_call:
         level = 2 if (pot and to_call > 0.75 * pot) else 1
+    elif board and prior_aggr:
+        level = 1  # соперник уже ставил/повышал раньше в этой раздаче - у него обычно что-то есть
     level = max(-1, min(2, level + level_shift))
     eq = equity(list(hole), list(board), n_opp, level)
     bbs = my_stack / bb if my_stack and bb else None
@@ -380,6 +404,10 @@ def advise(hole, board, n_opp, to_call, pot, bb=500, level_shift=0, my_stack=Non
         return eq, ("ЧЕК" if not to_call else "ФОЛД"), "слабая рука" + (" для ранней позиции" if pos == "early" and _playable(hole) else "")
     # после флопа
     adj = eq
+    danger = board_danger(list(hole), list(board))
+    if not to_call and danger and prior_aggr:
+        return eq, "ЧЕК", (f"{danger}, а соперник уже ставил в этой раздаче: на вашу ставку заплатит "
+                           f"в основном рука сильнее. На небольшую ставку соперника - колл")
     if not to_call:
         p = pot or 0
         if eq >= 0.8:

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Окно-подсказка поверх игры + запись раздач."""
-VERSION = "версия 8 (27.11)"
+VERSION = "версия 9 (27.11)"
 import time
 from collections import Counter
 
@@ -54,6 +54,7 @@ class HintEngine:
         if hole and hole != self.cur_hole and not board:
             self.cur_hole = hole
             self.prof.new_hand()
+            self.aggr_streets = set()
         self.prof.update(seats, len(board))
         # вскрытие: карты соперников запоминаем в их профиль
         if len(board) == 5 and len(others) >= 2:
@@ -79,6 +80,12 @@ class HintEngine:
         my_stack = me["stack"] if me else None
         # кто поставил: последний с действием "ставка/рейз"
         bettor = next((s for s in in_hand if s["status"] in ("bet", "raise")), None)
+        # запоминаем, что соперник ставил/повышал после флопа в этой раздаче
+        if not hasattr(self, "aggr_streets"):
+            self.aggr_streets = set()
+        if bettor and board:
+            self.aggr_streets.add(len(board))
+        prior_aggr = any(st < len(board) for st in self.aggr_streets)
         bettor_id = self.prof.seat_id.get(bettor["seat"]) if bettor else None
         style = self.prof.style(bettor_id)
         shift = {"aggr": -1, "passive": 1}.get(style, 0) if to_call else 0
@@ -86,10 +93,11 @@ class HintEngine:
         opp_short = bool(bettor and bettor["stack"] is not None and to_call
                          and bettor["stack"] < bb * 2 and to_call <= 15 * bb)  # пошёл ол-ин с коротким стеком
         pos = players.my_position(seats, players.find_dealer(img))
-        key = (hole, tuple(board), to_call, pot, n_opp, my_stack, shift, opp_short, pos)
+        key = (hole, tuple(board), to_call, pot, n_opp, my_stack, shift, opp_short, pos, prior_aggr)
         if key != self.last_key:
             eq, act, why = hints.advise(list(hole), list(board), n_opp, to_call, pot, bb,
-                                        level_shift=shift, my_stack=my_stack, opp_short=opp_short, pos=pos)
+                                        level_shift=shift, my_stack=my_stack, opp_short=opp_short, pos=pos,
+                                        prior_aggr=prior_aggr)
             # блеф против тех, кто часто сбрасывает на ставку
             if board and not to_call and act == "ЧЕК" and in_hand:
                 fv = [self.prof.stats(self.prof.seat_id.get(s["seat"]))["fvb"] if self.prof.seat_id.get(s["seat"]) else None
