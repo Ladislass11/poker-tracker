@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Окно-подсказка поверх игры + запись раздач."""
+VERSION = "версия 7 (27.11)"
 import time
 from collections import Counter
 
@@ -153,7 +154,7 @@ def run(monitor, fps, record=True):
     big.pack(fill="x", padx=12, pady=(8, 0))
     mid = tk.Label(root, text="", font=("Segoe UI", 12), fg="#ddd", bg="#111", anchor="w", justify="left")
     mid.pack(fill="x", padx=12)
-    small = tk.Label(root, text="перетащите мышью · правый клик - закрыть", font=("Segoe UI", 9),
+    small = tk.Label(root, text=f"{VERSION} · перетащите мышью · правый клик - закрыть", font=("Segoe UI", 9),
                      fg="#777", bg="#111", anchor="w")
     small.pack(fill="x", padx=12, pady=(0, 8))
 
@@ -209,7 +210,7 @@ def run(monitor, fps, record=True):
             mid.config(text=f"ошибка кадра: {e}")
         root.after(int(1000 / fps), tick)
 
-    print("Подсказка запущена: окно в левом верхнем углу экрана.")
+    print(f"Подсказка запущена ({VERSION}): окно в левом верхнем углу экрана.")
     print("Перетащите его мышью куда удобно. Закрыть: правый клик по окну.")
     root.after(300, tick)
     root.mainloop()
